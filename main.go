@@ -50,12 +50,6 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 			mgl64.Scale3D(1, 1, -1)).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 
-		//lowerLeftTransform := mat4.Ident.Scale(0.5).Translate(&mgl64.Vec3{-0.5, -0.5, 0})
-		//lowerRightTransform := mat4.Ident.AssignZRotation(-math.Pi / 2).Scale(0.5).Translate(&mgl64.Vec3{0.5, -0.5, 0})
-		//upperRightTransform := mat4.Ident.Scale(0.5).Translate(&mgl64.Vec3{0.5, 0.5, 0})
-		//upperLeftTransform := mat4.Ident.AssignZRotation(math.Pi / 2).Scale(0.5).Translate(&mgl64.Vec3{-0.5, 0.5, 0})
-		//middleTransform := mat4.Ident.Scale(0.5).ScaleVec3(&mgl64.Vec3{1, 1, -1}).Translate(&mgl64.Vec3{0, 0, -0.5})
-
 		// lower left
 		lowerLeft := sierpinski(order-1, height*2)
 		assertMod4Len(lowerLeft)
@@ -116,7 +110,7 @@ func assertMod4Len(v []mgl64.Vec3) {
 	}
 }
 
-func writeToGcode(writer io.Writer, pts []mgl64.Vec3, extrusionPerLinearMM float64) {
+func writeToGcode(writer io.Writer, pts []mgl64.Vec3, extrusionPerLinearMM, speedMmS float64) {
 	e := 0.0
 	lastPt := pts[0]
 	for _, pt := range pts {
@@ -124,10 +118,11 @@ func writeToGcode(writer io.Writer, pts []mgl64.Vec3, extrusionPerLinearMM float
 		if dist < 0.001 {
 			continue
 		}
-		e += dist * extrusionPerLinearMM
-		_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f E%f\n",
+		e = dist * extrusionPerLinearMM
+		_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f E%f F%f\n",
 			pt[0], pt[1], pt[2],
-			e)
+			e,
+			speedMmS*60)
 		lastPt = pt
 	}
 }
@@ -136,6 +131,9 @@ func main() {
 	order := 3
 	scale := 50.0
 	numLayers := int(scale / 0.2)
+	speedMmS := 35.0
+	bedSize2 := 150.0
+	zOffset := 0.4
 
 	points := []mgl64.Vec3{}
 	for i := 0; i < numLayers; i++ {
@@ -143,7 +141,7 @@ func main() {
 		points = append(points, sierpinski(order, height)...)
 	}
 	for i := range points {
-		points[i] = points[i].Mul(scale).Add(mgl64.Vec3{150, 150, 0})
+		points[i] = points[i].Mul(scale).Add(mgl64.Vec3{bedSize2, bedSize2, zOffset})
 	}
 
 	//fmt.Println("G28 ; home")
@@ -168,7 +166,15 @@ func main() {
 
 	// cross-section area of extrusion line, divided by cross-section area of filament
 	extrusionPerLinearMM := 0.2 * 0.4 / (math.Pi * math.Pow(1.75/2, 2))
-	writeToGcode(os.Stdout, points, extrusionPerLinearMM)
+	fmt.Println("G21 ; set units to mm")
+	//fmt.Println("M82 ; set absolute extrusion")
+	fmt.Println("M83 ; set relative extrusion")
+	// print a line to get the extruder primed
+	fmt.Printf("G0 X%f Y%f Z%f\n", bedSize2+scale, bedSize2-scale-10, zOffset)
+	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale-10, extrusionPerLinearMM*2*scale, speedMmS*60)
+	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale, extrusionPerLinearMM*10, speedMmS*60)
+
+	writeToGcode(os.Stdout, points, extrusionPerLinearMM, speedMmS)
 
 	// end gcode
 	fmt.Println("G1 E-10 F6000 ; retract filament hopefully just enough to allow cold-changing filament")
