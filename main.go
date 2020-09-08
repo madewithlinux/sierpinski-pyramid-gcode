@@ -8,12 +8,14 @@ import (
 	"os"
 )
 
+var pyramidHeight = math.Sqrt(2)
+
 /**
 standard sierpinski has base on the [-1,1] square in x and y
-and z goes from 0 to 1
+and z goes from 0 to sqrt(2)
 */
 func sierpinski0(height float64) []mgl64.Vec3 {
-	scale := 1 - height
+	scale := (pyramidHeight - height) / pyramidHeight
 	points := []mgl64.Vec3{
 		{-scale, -scale, height},
 		{scale, -scale, height},
@@ -29,11 +31,11 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 	} else if order < 0 {
 		panic("order < 0")
 	}
-	if height < 0 || height > 1 {
+	if height < 0 || height > pyramidHeight {
 		panic("height out of range!")
 	}
 
-	if height < 0.5 { // bottom half
+	if height < pyramidHeight/2 { // bottom half
 
 		// assuming that matrix multiplication makes the transformations happen in reverse order
 		lowerLeftTransform := mgl64.Translate3D(-0.5, -0.5, 0).Mul4(
@@ -46,7 +48,7 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		upperLeftTransform := mgl64.Translate3D(-0.5, 0.5, 0).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5)).Mul4(
 			mgl64.HomogRotate3DZ(math.Pi / 2))
-		middleTransform := mgl64.Translate3D(0, 0, 0.5).Mul4(
+		middleTransform := mgl64.Translate3D(0, 0, pyramidHeight/2).Mul4(
 			mgl64.Scale3D(1, 1, -1)).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 
@@ -71,7 +73,7 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		transformSlice(upperLeftTransform, upperLeft)
 
 		// middle
-		middle := sierpinski(order-1, 1-height*2)
+		middle := sierpinski(order-1, pyramidHeight-height*2)
 		assertMod4Len(middle)
 		transformSlice(middleTransform, middle)
 
@@ -87,11 +89,11 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		res = append(res, lowerLeft[len(lowerLeft)/2:]...)
 		return res
 	} else { // top half
-		middleTransform := mgl64.Translate3D(0, 0, 0.5).Mul4(
+		middleTransform := mgl64.Translate3D(0, 0, pyramidHeight/2).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 		//middleTransform := mat4.Ident.Scale(0.5).Translate(&mgl64.Vec3{0, 0, 0.5})
 		// middle
-		middle := sierpinski(order-1, (height-0.5)*2)
+		middle := sierpinski(order-1, (height-pyramidHeight/2)*2)
 		assertMod4Len(middle)
 		transformSlice(middleTransform, middle)
 		return middle
@@ -110,15 +112,23 @@ func assertMod4Len(v []mgl64.Vec3) {
 	}
 }
 
-func writeToGcode(writer io.Writer, pts []mgl64.Vec3, extrusionPerLinearMM, speedMmS float64) {
-	e := 0.0
+func writeToGcode(
+	writer io.Writer,
+	pts []mgl64.Vec3,
+	extrusionPerLinearMM, speedMmS float64,
+	fanStartHeight float64,
+) {
 	lastPt := pts[0]
+	e := 0.0
 	for _, pt := range pts {
 		dist := pt.Sub(lastPt).Len()
-		if dist < 0.001 {
+		if dist < 0.0001 {
 			continue
 		}
-		e = dist * extrusionPerLinearMM
+		if math.Abs(lastPt.Z()-pt.Z()) > 0.001 && math.Abs(pt.Z()-fanStartHeight) > 0.001 {
+			_, _ = fmt.Fprintln(writer, "M106 P0 S1")
+		}
+		e += dist * extrusionPerLinearMM
 		_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f E%f F%f\n",
 			pt[0], pt[1], pt[2],
 			e,
@@ -128,16 +138,20 @@ func writeToGcode(writer io.Writer, pts []mgl64.Vec3, extrusionPerLinearMM, spee
 }
 
 func main() {
+	//order := 7
+	//scale := 100.0
 	order := 3
-	scale := 50.0
+	scale := 20.0
+	fmt.Printf("; size: %f\n", scale/math.Pow(2, float64(order)))
 	numLayers := int(scale / 0.2)
 	speedMmS := 35.0
 	bedSize2 := 150.0
 	zOffset := 0.4
+	fanStartHeight := zOffset + 0.2*3
 
 	points := []mgl64.Vec3{}
 	for i := 0; i < numLayers; i++ {
-		height := float64(i) / float64(numLayers)
+		height := pyramidHeight * float64(i) / float64(numLayers)
 		points = append(points, sierpinski(order, height)...)
 	}
 	for i := range points {
@@ -174,7 +188,7 @@ func main() {
 	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale-10, extrusionPerLinearMM*2*scale, speedMmS*60)
 	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale, extrusionPerLinearMM*10, speedMmS*60)
 
-	writeToGcode(os.Stdout, points, extrusionPerLinearMM, speedMmS)
+	writeToGcode(os.Stdout, points, extrusionPerLinearMM, speedMmS, fanStartHeight)
 
 	// end gcode
 	fmt.Println("G1 E-10 F6000 ; retract filament hopefully just enough to allow cold-changing filament")
