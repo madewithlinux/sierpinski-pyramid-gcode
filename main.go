@@ -3,137 +3,198 @@ package main
 import (
 	"fmt"
 	"github.com/go-gl/mathgl/mgl64"
+	"gopkg.in/yaml.v2"
 	"io"
+	"io/ioutil"
 	"math"
 	"os"
 )
 
-var pyramidHeight = math.Sqrt(2)
+var pyramidNominalHeight = math.Sqrt(2)
 var threshold = 0.0001
 
-func main() {
-	//order := 7
-	//scale := 100.0
-	order := 3
-	// TODO: change it so that scale is the size of the square base of the pyramid, not the radius
-	scale := 10.0
-	fmt.Printf("; size: %f\n", scale/math.Pow(2, float64(order)))
-	speedMmS := 55.0
-	bedSize2 := 150.0
-	zOffset := 0.4
-	fanStartLayer := 3
-	relativeExtrusion := false
-	// TODO extrusion width, layer height options
+type GcodeGenerator struct {
+	Order             int
+	Size              float64
+	SpeedMmS          float64
+	BedSize           float64
+	ZOffset           float64
+	FanStartLayer     int
+	RelativeExtrusion bool
+	ExtrusionWidth    float64
+	FilamentDiameter  float64
+	LayerHeight       float64
+	StartGcode        string
+	EndGcode          string
+	OutputFilename    string
+	/////////////////////////////////////////////
+	pyramidZHeight       float64
+	numLayers            int
+	extrusionPerLinearMM float64
+	extruderPosition     float64
+	lastToolheadPosition mgl64.Vec3
+	bedCenter            mgl64.Vec3
+	writer               io.Writer
+}
 
-	//////////////////////////////////////
+func DefaultGcodeGenerator(inputFilename string) GcodeGenerator {
+	return GcodeGenerator{
+		SpeedMmS:          40,
+		ZOffset:           0,
+		FanStartLayer:     3,
+		RelativeExtrusion: true,
+		ExtrusionWidth:    0.4,
+		FilamentDiameter:  1.75,
+		LayerHeight:       0.2,
+		OutputFilename:    inputFilename + ".gcode",
+		// TODO make some reasonable defaults for these
+		//StartGcode:
+		//EndGcode:
 
-	writeStartGcode()
+	}
+}
 
-	numLayers := int(scale / 0.2)
-	// cross-section area of extrusion line, divided by cross-section area of filament
-	extrusionPerLinearMM := 0.2 * 0.4 / (math.Pi * math.Pow(1.75/2, 2))
-	extruderPosition := 0.0
-	fmt.Println("G21 ; set units to mm")
-	if relativeExtrusion {
-		fmt.Println("M83 ; set relative extrusion")
+func (g *GcodeGenerator) Init() {
+	g.pyramidZHeight = pyramidNominalHeight * g.Size / 2
+	g.numLayers = int(g.pyramidZHeight / g.LayerHeight)
+	g.extrusionPerLinearMM = g.LayerHeight * g.ExtrusionWidth / (math.Pi * math.Pow(g.FilamentDiameter/2, 2))
+	g.bedCenter = mgl64.Vec3{g.BedSize / 2, g.BedSize / 2, g.ZOffset}
+
+	if g.OutputFilename == "-" || g.OutputFilename == "stdout" {
+		g.writer = os.Stdout
 	} else {
-		fmt.Println("M82 ; set absolute extrusion")
+		f, err := os.Create(g.OutputFilename)
+		die(err)
+		g.writer = f
 	}
-	// TODO: write print time estimates
-	// TODO: write filament usage
-	// print a line to get the extruder primed
-	fmt.Printf("G0 X%f Y%f Z%f\n", bedSize2+scale, bedSize2-scale-10, zOffset)
-	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale-10, extrusionPerLinearMM*2*scale, speedMmS*60)
-	if !relativeExtrusion {
-		extruderPosition += extrusionPerLinearMM * 2 * scale
-	}
-	fmt.Printf("G1 X%f Y%f E%f F%f\n", bedSize2-scale, bedSize2-scale, extruderPosition+extrusionPerLinearMM*10, speedMmS*60)
-	if !relativeExtrusion {
-		extruderPosition += extrusionPerLinearMM * 10
-	}
+}
 
-	for i := 0; i < numLayers; i++ {
+func (g *GcodeGenerator) Generate() {
+	// TODO: print config settings in the gcode (and to stdout)
+	g.writeStartGcode()
+	g.writePrimeLine()
 
-		layerZHeight := pyramidHeight * float64(i) / float64(numLayers)
-		points := sierpinski(order, layerZHeight)
+	for i := 0; i < g.numLayers; i++ {
+		layerNominalHeight := pyramidNominalHeight * float64(i) / float64(g.numLayers)
+		layerActualZHeight := g.ZOffset + float64(i)*g.LayerHeight
+		points := sierpinski(g.Order, layerNominalHeight)
 		for i := range points {
-			points[i] = points[i].Mul(scale).Add(mgl64.Vec3{bedSize2, bedSize2, zOffset})
+			points[i] = points[i].Mul(g.Size / 2).Add(g.bedCenter)
+			// this is to make sure that Z values are always nice round numbers
+			points[i][2] = layerActualZHeight
 		}
-		writeToGcode(os.Stdout, points, extrusionPerLinearMM, speedMmS, &extruderPosition, relativeExtrusion)
-		if i == fanStartLayer {
-			fmt.Println("M106 P0 S1")
+		g.writeLayer(points)
+		if i == g.FanStartLayer {
+			g.fanOn()
 		}
 	}
-
-	writeEndGcode()
+	g.fanOff()
+	g.writeEndGcode()
 }
 
-func writeToGcode(
-	writer io.Writer,
-	pts []mgl64.Vec3,
-	extrusionPerLinearMM, speedMmS float64,
-	extruderPosition *float64,
-	relativeExtrusion bool,
-) {
-	// G0 travel move to the first point in the perimeter
-	_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f F%f\n", pts[0][0], pts[0][1], pts[0][2], speedMmS*60)
+func (g *GcodeGenerator) travelTo(pt mgl64.Vec3) {
+	if vec4ApproxEq(g.lastToolheadPosition, pt) {
+		return
+	}
+	g.fprintfOrFail("G0 X%f Y%f Z%f F%f\n", pt[0], pt[1], pt[2], g.SpeedMmS*60)
+	g.lastToolheadPosition = pt
+}
 
-	lastPt := pts[0]
-	e := *extruderPosition
+func (g *GcodeGenerator) printToXY(x, y float64) {
+	g.printTo(mgl64.Vec3{x, y, g.lastToolheadPosition.Z()})
+}
+func (g *GcodeGenerator) printTo(pt mgl64.Vec3) {
+	if vec4ApproxEq(g.lastToolheadPosition, pt) {
+		return
+	}
+	e := pt.Sub(g.lastToolheadPosition).Len() * g.extrusionPerLinearMM
+	if !g.RelativeExtrusion {
+		g.extruderPosition += e
+		e = g.extruderPosition
+	}
+	g.fprintfOrFail("G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, g.SpeedMmS*60)
+	g.lastToolheadPosition = pt
+}
+
+func (g *GcodeGenerator) writeLayer(pts []mgl64.Vec3) {
+	if pts == nil || len(pts) == 0 {
+		return
+	}
+
+	// yes, we are intentionally using a print move (and not a travel move) to change layers.
+	// For this sierpinski pyramid, it looks better that way (at least on my printer)
 	for _, pt := range pts {
-		if vec4ApproxEq(lastPt, pt) {
-			continue
-		}
-		dist := pt.Sub(lastPt).Len()
-		if relativeExtrusion {
-			e = dist * extrusionPerLinearMM
-		} else {
-			e += dist * extrusionPerLinearMM
-		}
-		_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, speedMmS*60)
-		lastPt = pt
+		g.printTo(pt)
 	}
-	if !vec4ApproxEq(pts[0], lastPt) {
-		// if the perimieter doesn't loop, we need to make it loop manually
-		pt := pts[0]
-		dist := pt.Sub(lastPt).Len()
-		if relativeExtrusion {
-			e = dist * extrusionPerLinearMM
-		} else {
-			e += dist * extrusionPerLinearMM
-		}
-		_, _ = fmt.Fprintf(writer, "G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, speedMmS*60)
+	firstPt := pts[0]
+	lastPt := pts[len(pts)-1]
+	if !vec4ApproxEq(firstPt, lastPt) {
+		g.printTo(firstPt)
 	}
-	*extruderPosition = e
 }
 
-func writeStartGcode() {
-	// start gcode
-	fmt.Println("G28 ; home all axes")
-	fmt.Println("G1 Z15 ; move extruder up")
-	fmt.Println("G1 Y80 X80 F6000 ; move bed out of the way of the first binder clip")
-	fmt.Println("M203 X4800 Y4800 ; slow max speed")
-	fmt.Println("M566 X150 Y150 Z50 E600 ; Set allowable instantaneous speed change (jerk)")
-	fmt.Println("T0 ; first (and only) toolhead")
-	fmt.Println("M116")
-	fmt.Println("M104 S215 ; set extruder temp")
-	fmt.Println("M140 S65 ; set bed temp")
-	fmt.Println("M116 ; wait for all temperatures")
-
-	// filament gcode
-	fmt.Println("M572 D0 S0.064 ; use very low pressure advance (assume printing at or below 80mm/s")
-	fmt.Println("M566 E100.00 ; max instantaneous speed change")
-	fmt.Println("M201 E500 ; acceleration")
+func (g *GcodeGenerator) fprintlnOrFail(s string) {
+	_, err := fmt.Fprintln(g.writer, s)
+	die(err)
 }
 
-func writeEndGcode() {
-	// end gcode
-	fmt.Println("G1 E-10 F6000 ; retract filament hopefully just enough to allow cold-changing filament")
-	fmt.Println("M104 S0 ; turn off extruder")
-	fmt.Println("M140 S0 ; turn off bed")
-	fmt.Println("G28 X0 Y0  ; home axes")
-	fmt.Println("G1 Y300 F6000 ; move the bed out")
-	fmt.Println("M84     ; disable motors")
+func (g *GcodeGenerator) fprintfOrFail(format string, a ...interface{}) {
+	_, err := fmt.Fprintf(g.writer, format, a...)
+	die(err)
+}
+
+func (g *GcodeGenerator) fanOn() {
+	g.fprintlnOrFail("M106 S255")
+}
+
+func (g *GcodeGenerator) fanOff() {
+	g.fprintlnOrFail("M107")
+}
+
+func (g *GcodeGenerator) writeStartGcode() {
+	g.fprintlnOrFail(g.StartGcode)
+	g.fprintlnOrFail("G21 ; set units to mm")
+	if g.RelativeExtrusion {
+		g.fprintlnOrFail("M83 ; set relative extrusion")
+	} else {
+		g.fprintlnOrFail("M82 ; set absolute extrusion")
+	}
+}
+
+func (g *GcodeGenerator) writeEndGcode() {
+	g.fprintlnOrFail(g.EndGcode)
+}
+
+func (g *GcodeGenerator) writePrimeLine() {
+	// TODO: make a prime line pattern that can work for arbitrary prime size needed
+	bedSize2 := g.BedSize / 2
+	scale := g.Size / 2
+	g.travelTo(mgl64.Vec3{bedSize2 + scale, bedSize2 - scale - 10, g.ZOffset})
+	g.printToXY(bedSize2-scale, bedSize2-scale-10)
+	g.printToXY(bedSize2-scale, bedSize2-scale)
+}
+
+func die(err error) {
+	if err != nil {
+		panic(err)
+	}
+}
+
+func main() {
+	infile := os.Args[1]
+	bytes, err := ioutil.ReadFile(infile)
+	die(err)
+
+	g := DefaultGcodeGenerator(infile)
+	err = yaml.Unmarshal(bytes, &g)
+	die(err)
+
+	g.Init()
+
+	fmt.Printf("%+v\n", g)
+	fmt.Printf("; size: %f\n", g.Size/2/math.Pow(2, float64(g.Order)))
+
+	g.Generate()
 }
 
 /**
@@ -141,7 +202,7 @@ standard sierpinski has base on the [-1,1] square in x and y
 and z goes from 0 to sqrt(2)
 */
 func sierpinski0(height float64) []mgl64.Vec3 {
-	scale := (pyramidHeight - height) / pyramidHeight
+	scale := (pyramidNominalHeight - height) / pyramidNominalHeight
 	points := []mgl64.Vec3{
 		{-scale, -scale, height},
 		{scale, -scale, height},
@@ -157,13 +218,15 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 	} else if order < 0 {
 		panic("order < 0")
 	}
-	if height < 0 || height > pyramidHeight {
+	if height < 0 || height > pyramidNominalHeight {
 		panic("height out of range!")
 	}
 
-	if height < pyramidHeight/2 { // bottom half
+	if height < pyramidNominalHeight/2 { // bottom half
 
-		// assuming that matrix multiplication makes the transformations happen in reverse order
+		// matrix multiplication makes the transformations happen in reverse order
+		// TODO: this stuff would probably be way easier if I had just used 2D points instead of 3D, right? Since I'm
+		// always returning points for a particular Z, anyway...
 		lowerLeftTransform := mgl64.Translate3D(-0.5, -0.5, 0).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 		lowerRightTransform := mgl64.Translate3D(0.5, -0.5, 0).Mul4(
@@ -174,7 +237,7 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		upperLeftTransform := mgl64.Translate3D(-0.5, 0.5, 0).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5)).Mul4(
 			mgl64.HomogRotate3DZ(math.Pi / 2))
-		middleTransform := mgl64.Translate3D(0, 0, pyramidHeight/2).Mul4(
+		middleTransform := mgl64.Translate3D(0, 0, pyramidNominalHeight/2).Mul4(
 			mgl64.Scale3D(1, 1, -1)).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 
@@ -199,7 +262,7 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		transformSlice(upperLeftTransform, upperLeft)
 
 		// middle
-		middle := sierpinski(order-1, pyramidHeight-height*2)
+		middle := sierpinski(order-1, pyramidNominalHeight-height*2)
 		assertMod4Len(middle)
 		transformSlice(middleTransform, middle)
 
@@ -215,11 +278,11 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		res = append(res, lowerLeft[len(lowerLeft)/2:]...)
 		return res
 	} else { // top half
-		middleTransform := mgl64.Translate3D(0, 0, pyramidHeight/2).Mul4(
+		middleTransform := mgl64.Translate3D(0, 0, pyramidNominalHeight/2).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
 		//middleTransform := mat4.Ident.Scale(0.5).Translate(&mgl64.Vec3{0, 0, 0.5})
 		// middle
-		middle := sierpinski(order-1, (height-pyramidHeight/2)*2)
+		middle := sierpinski(order-1, (height-pyramidNominalHeight/2)*2)
 		assertMod4Len(middle)
 		transformSlice(middleTransform, middle)
 		return middle
@@ -240,5 +303,5 @@ func assertMod4Len(v []mgl64.Vec3) {
 
 func vec4ApproxEq(a, b mgl64.Vec3) bool {
 	dist := a.Sub(b).Len()
-	return dist < 0.0001
+	return dist < threshold
 }

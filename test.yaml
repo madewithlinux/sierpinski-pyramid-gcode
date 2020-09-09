@@ -1,0 +1,33 @@
+order: 3
+size: 20
+speedmms: 50
+bedsize: 300
+zoffset: 0.4
+fanstartlayer: 3
+relativeextrusion: true
+extrusionwidth: 0.4
+layerheight: 0.2
+
+# https://yaml-multiline.info/
+startgcode: |
+  G28                     ; home all axes
+  G1 Z15                  ; move extruder up
+  G1 Y80 X80 F6000        ; move bed out of the way of the first binder clip
+  M203 X4800 Y4800        ; slow max speed
+  M566 X150 Y150 Z50 E600 ; Set allowable instantaneous speed change (jerk)
+  T0                      ; first (and only) toolhead
+  M116
+  M104 S215               ; set extruder temp
+  M140 S65                ; set bed temp
+  M116                    ; wait for all temperatures
+  M572 D0 S0.064          ; use very low pressure advance (assume printing at or below 80mm/s
+  M566 E100.00            ; max instantaneous speed change
+  M201 E500               ; acceleration
+endgcode: |
+  M83           ; set relative extrusion
+  G1 E-10 F6000 ; retract filament just enough to allow cold-changing filament
+  M104 S0       ; turn off extruder
+  M140 S0       ; turn off bed
+  G28 X0 Y0     ; home axes
+  G1 Y300 F6000 ; move the bed out
+  M84           ; disable motors
