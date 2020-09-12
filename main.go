@@ -15,19 +15,19 @@ var pyramidNominalHeight = math.Sqrt(2)
 var threshold = 0.0001
 
 type GcodeGenerator struct {
-	Order             int
-	Size              float64
-	SpeedMmS          float64
-	BedSize           float64
-	ZOffset           float64
-	FanStartLayer     int
-	RelativeExtrusion bool
-	ExtrusionWidth    float64
-	FilamentDiameter  float64
-	LayerHeight       float64
-	StartGcode        string
-	EndGcode          string
-	OutputFilename    string
+	Order             int     `yaml:"order"`
+	Size              float64 `yaml:"size"`
+	SpeedMmS          float64 `yaml:"speed"`
+	BedSize           float64 `yaml:"bedSize"`
+	ZOffset           float64 `yaml:"zOffset"`
+	FanStartLayer     int     `yaml:"fanStartLayer"`
+	RelativeExtrusion bool    `yaml:"relativeExtrusion"`
+	ExtrusionWidth    float64 `yaml:"extrusionWidth"`
+	FilamentDiameter  float64 `yaml:"filamentDiameter"`
+	LayerHeight       float64 `yaml:"layerHeight"`
+	StartGcode        string  `yaml:"startGcode"`
+	EndGcode          string  `yaml:"endGcode"`
+	OutputFilename    string  `yaml:"outputFilename"`
 	/////////////////////////////////////////////
 	inputFilename        string
 	inputFileContent     []byte
@@ -254,7 +254,7 @@ func main() {
 	die(err)
 
 	g := DefaultGcodeGenerator(infile, bytes)
-	err = yaml.Unmarshal(bytes, &g)
+	err = yaml.UnmarshalStrict(bytes, &g)
 	die(err)
 
 	g.Init()
