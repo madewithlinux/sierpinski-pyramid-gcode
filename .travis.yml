@@ -1,9 +1,26 @@
 language: go
+
+before_install:
+  - go get github.com/mitchellh/gox
+
+install:
+  - # skip
+
+script:
+  - go get -t -v ./...
+  - diff -u <(echo -n) <(gofmt -d .)
+  - go vet ./...
+  - go test -v -race ./...
+  - gox -os="linux darwin windows" -arch="amd64" -output="sierpinski-pyramid-gcode.{{.OS}}" -ldflags "-X main.Rev=`git rev-parse --short HEAD` -X main.Version=`git describe --tags`" -verbose ./...
+
 deploy:
   provider: releases
   api_key:
     secure: TP1D85+p73vHWwCtrRnSKq4zvfuS7xpJIHCZubEgj8x0la1WO6fA9QsPQalr+QFx/uaeFElvLEspBgBl7UKPXc8RMKZtpqZd0ULwcqjPT8D2VSNVpJD+5hj6b8Vo5SnKM7XvmkvPTrnfK+S2Dm9rwiqy11QwebvrRdJ2kNm82Am60Jv/ggLtRYPDo3JgZ2RRDu9OJhR6923Hzc1UoX3KrkVQiJUifEmkTHaTOV5qwU0qJjJqsAjGFPK6fXTbPNd4Xh+MsKZTc48OT0+eSxyDzGz+ojDELr5UdBfHNCTXSjEBjp3P8WpYpLHljz/T/2+Er3eC8xU0eB6ZNaDURMla6drZv6pb/pxVk8KDLL8GbDzptfyqKlgpTrxaJHJTurHLB8A7RK81sIRZfmNjv7nLBuenvKaDngYOPzkahJTGnHEKuxHoM5zWrDR7ywFaBnPCTmcOIghJceeOZt2ww03n37Efh8hcLVfadeGdCu6tIIApGAIiZuKiNR6uhVJxnsEy7NVhkQCDmipApm5jtrZOBczwVqO1SzCieYdyzSQY1bPhEMc01vkdbqEZwsvNJYPmDzQ+ivYHGlpsIJ7VUeBv+dVAfnlToa/I7G0HdPqFdQ/WU11EGh3vcMelhjLxGxvx6eSCHM0sO1LN1yNL7/YfdTG73Hfh20s2dYzpaF4XKbs=
-  file: sierpinski-pyramid-gcode
+  file:
+    - sierpinski-pyramid-gcode.darwin
+    - sierpinski-pyramid-gcode.linux
+    - sierpinski-pyramid-gcode.windows.exe
   skip_cleanup: true
   on:
     tags: true
