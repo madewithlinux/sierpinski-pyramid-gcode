@@ -412,6 +412,10 @@ func FloatToSmallestString(f float64, decimals int) string {
 		return s
 	}
 	// this is faster than using strings.TrimRight()
+
+	// 3d printers should be able to interpret less-than-1 numbers without leading zeros (like ".01" instead of "0.01")
+	// RepRapFirmware should be fine (ref. https://github.com/Duet3D/RRFLibraries/blob/master/src/General/SafeStrtod.cpp)
+	// Marlin should be fine, too: https://github.com/MarlinFirmware/Marlin/blob/2.0.x/Marlin/src/gcode/parser.h#L248
 	if s[0] == '0' {
 		s = s[1:]
 	}
