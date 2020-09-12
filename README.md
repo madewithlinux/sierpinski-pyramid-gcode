@@ -54,9 +54,10 @@ So, my solution (implemented in this repository) is to simply skip the CAD and s
 
 
 # see also/references
+* [Marlin gcode reference](https://marlinfw.org/docs/gcode/G000-G001.html)
+* [Duet RepRapFirmware gcode reference](https://duet3d.dozuki.com/Wiki/Gcode)
 * 3d models
   * https://www.thingiverse.com/thing:1356547
   * https://www.thingiverse.com/thing:2573402
   * https://www.thingiverse.com/thing:2613568
-* https://duet3d.dozuki.com/Wiki/Gcode
 * https://github.com/Duet3D/RepRapFirmware/blob/2.03/src/Storage/FileInfoParser.cpp
