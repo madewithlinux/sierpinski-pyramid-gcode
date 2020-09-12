@@ -3,7 +3,7 @@
 
 # these settings do not have a default value provided, so you must specify them
 order: 4
-size: 30     # mm
+size: 50     # mm
 bedSize: 300 # also mm
 
 
