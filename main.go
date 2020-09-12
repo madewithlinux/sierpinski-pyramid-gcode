@@ -70,6 +70,13 @@ func (g *GcodeGenerator) Init() {
 	g.bedCenter = mgl64.Vec3{g.BedSize / 2, g.BedSize / 2, g.ZOffset}
 	g.smallestPyramidSize = g.Size / math.Pow(2, float64(g.Order))
 
+	if g.smallestPyramidSize < 5.0*g.ExtrusionWidth {
+		fmt.Println("warning: the smallest pyramids are very small in comparison to your extrusion width. consider lowering the fractal order, for a better print")
+		fmt.Printf("smallestPyramidSize: %f, extrusionWidth: %f\n", g.smallestPyramidSize, g.ExtrusionWidth)
+		fmt.Printf("smallestPyramidSize of %f or larger is recommend, for extrusionWidth: %f (such that smallestPyramidSize >= 5 * extrusionWidth)\n",
+			g.ExtrusionWidth*5, g.ExtrusionWidth)
+	}
+
 	if g.OutputFilename == "-" || g.OutputFilename == "stdout" {
 		g.writer = os.Stdout
 	} else {
