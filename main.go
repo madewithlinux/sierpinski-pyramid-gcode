@@ -8,6 +8,7 @@ import (
 	"io/ioutil"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -15,7 +16,7 @@ var Version = "development"
 var Rev = "HEAD"
 
 var pyramidNominalHeight = math.Sqrt(2)
-var threshold = 0.0001
+var thresholdSqr = 0.0001 * 0.0001
 
 type GcodeGenerator struct {
 	Order             int     `yaml:"order"`
@@ -31,6 +32,8 @@ type GcodeGenerator struct {
 	StartGcode        string  `yaml:"startGcode"`
 	EndGcode          string  `yaml:"endGcode"`
 	OutputFilename    string  `yaml:"outputFilename"`
+	GcodeXYDecimals   int     `yaml:"gcodeXYDecimals"`
+	GcodeEDecimals    int     `yaml:"gcodeEDecimals"`
 	/////////////////////////////////////////////
 	inputFilename        string
 	inputFileContent     []byte
@@ -57,9 +60,7 @@ func DefaultGcodeGenerator(inputFilename string, inputFileContent []byte) GcodeG
 		OutputFilename:    inputFilename + ".gcode",
 		inputFilename:     inputFilename,
 		inputFileContent:  inputFileContent,
-		// TODO make some reasonable defaults for these
-		//StartGcode:
-		//EndGcode:
+		GcodeXYDecimals:   2,
 	}
 }
 
@@ -69,6 +70,9 @@ func (g *GcodeGenerator) Init() {
 	g.extrusionPerLinearMM = g.LayerHeight * g.ExtrusionWidth / (math.Pi * math.Pow(g.FilamentDiameter/2, 2))
 	g.bedCenter = mgl64.Vec3{g.BedSize / 2, g.BedSize / 2, g.ZOffset}
 	g.smallestPyramidSize = g.Size / math.Pow(2, float64(g.Order))
+	if g.GcodeEDecimals == 0 {
+		g.GcodeEDecimals = int(math.Ceil(math.Log2(math.Exp2(float64(g.GcodeXYDecimals)) / g.extrusionPerLinearMM)))
+	}
 
 	if g.smallestPyramidSize < 5.0*g.ExtrusionWidth {
 		fmt.Println("warning: the smallest pyramids are very small in comparison to your extrusion width. consider lowering the fractal order, for a better print")
@@ -159,6 +163,24 @@ func (g *GcodeGenerator) printTo(pt mgl64.Vec3) {
 	g.fprintfOrFail("G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, g.SpeedMmS*60)
 	g.lastToolheadPosition = pt
 }
+func (g *GcodeGenerator) printToXYMinimal(pt mgl64.Vec3) {
+	// this outputs the shortest possible gcode text (to reduce the total gcode file size)
+	// and assumes that only X, Y, and E need to be moved. (Z movement is not handled)
+	if vec4ApproxEq(g.lastToolheadPosition, pt) {
+		return
+	}
+	e := pt.Sub(g.lastToolheadPosition).Len() * g.extrusionPerLinearMM
+	if !g.RelativeExtrusion {
+		g.extruderPosition += e
+		e = g.extruderPosition
+	}
+	g.fprintfOrFail("G1 X%s Y%s E%s\n",
+		FloatToSmallestString(pt[0], g.GcodeXYDecimals),
+		FloatToSmallestString(pt[1], g.GcodeXYDecimals),
+		FloatToSmallestString(e, g.GcodeEDecimals),
+	)
+	g.lastToolheadPosition = pt
+}
 
 func (g *GcodeGenerator) writeConfig() {
 	// TODO: also print this info to stdout?
@@ -193,10 +215,12 @@ func (g *GcodeGenerator) writeLayer(pts []mgl64.Vec3) {
 		return
 	}
 
+	g.printTo(pts[0])
+
 	// yes, we are intentionally using a print move (and not a travel move) to change layers.
 	// For this sierpinski pyramid, it looks better that way (at least on my printer)
 	for _, pt := range pts {
-		g.printTo(pt)
+		g.printToXYMinimal(pt)
 	}
 	firstPt := pts[0]
 	lastPt := pts[len(pts)-1]
@@ -378,6 +402,28 @@ func assertMod4Len(v []mgl64.Vec3) {
 }
 
 func vec4ApproxEq(a, b mgl64.Vec3) bool {
-	dist := a.Sub(b).Len()
-	return dist < threshold
+	dist := a.Sub(b).LenSqr()
+	return dist < thresholdSqr
+}
+
+func FloatToSmallestString(f float64, decimals int) string {
+	s := strconv.FormatFloat(f, 'f', decimals, 64)
+	if !strings.Contains(s, ".") {
+		return s
+	}
+	// this is faster than using strings.TrimRight()
+	if s[0] == '0' {
+		s = s[1:]
+	}
+	for s[len(s)-1] == '0' {
+		s = s[:len(s)-1]
+	}
+	if s[len(s)-1] == '.' {
+		s = s[:len(s)-1]
+	}
+	if len(s) == 0 {
+		// special case, to make sure we still have a number after all this
+		return "0"
+	}
+	return s
 }
