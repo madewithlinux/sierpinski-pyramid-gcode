@@ -41,7 +41,7 @@ So, my solution (implemented in this repository) is to simply skip the CAD and s
    * disclaimer: I have only tested the linux version. Windows and Mac (darwin) should work just fine, but I don't have a windows or mac computer, so...
 2. you need a config yaml file.
   * **Config files are printer-specific (just like slicer profiles). Do not print from a config file that you do not trust!**
-  * To make a config file for yourself, see `example_config.yml` file in this repository
+  * To make a config file for yourself, see [`example_config.yml`](example_config.yml) file in this repository
   * (also see https://yaml-multiline.info/ for a reference of multi-line string syntax in yaml files)
 3. run the gcode generator: the config file name is the only command-line parameter
    * linux: `./sierpinski-pyramid-gcode.linux YOUR_CONFIG_FILE.yml`
