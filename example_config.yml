@@ -1,0 +1,44 @@
+# example config file for sierpinski pyramid gcode generator
+# https://github.com/madewithlinux/sierpinski-pyramid-gcode
+
+# these settings do not have a default value provided, so you must specify them
+order: 4
+size: 30     # mm
+bedSize: 300 # also mm
+
+
+# these settings have default values in the code.
+# If you want a different value than what is listed here, you should specify it
+speed: 40 # this is in mm/s
+zOffset: 0 # mm
+fanStartLayer: 3
+relativeExtrusion: true
+extrusionWidth: 0.4 # mm
+filamentDiameter: 1.75 # mm
+layerHeight: 0.2 # mm
+outputFilename: inputFilename + ".gcode"
+
+
+# These next two values are the gcode to be executed before the print starts, and after the print is finished.
+# This needs to home the printer axes, set the extruder and bed temperatures, and whatever else is necessary for your particular printer to print successfully. (refer to the settings in your slicer, or even an existing gcode file output from your slicer)
+# YOU WILL NEED TO MODIFY THIS SECTION FOR YOUR PRINTER!!!
+# I wrote this example code with guesswork and the Marlin gcode docs https://marlinfw.org/docs/gcode/G000-G001.html
+startGcode: |
+  M117 You forgot to modify the startGcode section of the config file!
+  M76 ; pause print job
+  M25
+  
+  G28                     ; home all axes
+  M104 S200               ; set extruder temp
+  M140 S65                ; set bed temp
+  M201 X1000 Y1000 E500   ; set acceleration
+  M116                    ; wait for all temperatures
+  M109                    ; wait for hotend temperature
+  M190                    ; wait for bed temperature
+  ...whatever other gcode you need
+endGcode: |
+  M104 S0       ; turn off extruder
+  M140 S0       ; turn off bed
+  G28 X Y       ; home axes
+  M84           ; disable motors
+  ...whatever other gcode you need

@@ -5,8 +5,6 @@ Skip to the [usage/tutorial](#usagetutorial) section if you just want to get pri
 - [sierpinski pyramid gcode generator](#sierpinski-pyramid-gcode-generator)
 - [motivation](#motivation)
 - [usage/tutorial](#usagetutorial)
-- [implementation details (how does the code work?)](#implementation-details-how-does-the-code-work)
-- [mathematics explanation](#mathematics-explanation)
 - [see also/references](#see-alsoreferences)
 
 
@@ -31,6 +29,7 @@ This fractal has other properties that make it hard to model in most CAD softwar
 There are many 3D models to print of this fractal (see the references section below).
 These all make valiant efforts to solve issues (1) and (2) mentioned above, but the issue of total complexity still remains.
 **As of this writing, I have yet to find a 3D model of an iteration-7 sierpinski pyramid.**
+(or a physical, 3d-printed one, for that matter)
 It's just too complex to practically do.
 (Most of these models are built with OpenSCAD, and it just crashes if you try to make an iteration-7 fractal)
 
@@ -38,17 +37,19 @@ So, my solution (implemented in this repository) is to simply skip the CAD and s
 
 
 # usage/tutorial
-TODO
-
-
-
-
-# implementation details (how does the code work?)
-TODO
-
-
-# mathematics explanation
-TODO
+1. go to [the releases page](https://github.com/madewithlinux/sierpinski-pyramid-gcode/releases) and download the latest release for your platform
+   * disclaimer: I have only tested the linux version. Windows and Mac (darwin) should work just fine, but I don't have a windows or mac computer, so...
+2. you need a config yaml file.
+  * **Config files are printer-specific (just like slicer profiles). Do not print from a config file that you do not trust!**
+  * To make a config file for yourself, see `example_config.yml` file in this repository
+  * (also see https://yaml-multiline.info/ for a reference of multi-line string syntax in yaml files)
+3. run the gcode generator: the config file name is the only command-line parameter
+   * linux: `./sierpinski-pyramid-gcode.linux YOUR_CONFIG_FILE.yml`
+   * windows: `sierpinski-pyramid-gcode.windows.exe YOUR_CONFIG_FILE.yml`
+     * (you will need to run from command prompt, probably)
+   * mac: `./sierpinski-pyramid-gcode.darwin YOUR_CONFIG_FILE.yml` (run from terminal)
+4. print it!
+   * keep in mind that, for high-order fractals, the gcode file will be large. E.g. an order 7 fractal is >500MB of gcode, and takes roughly 100+ hours to print. But it's doable!
 
 
 
