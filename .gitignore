@@ -1,3 +1,6 @@
 *.gcode
 sierpinski-pyramid-gcode*
 notes.md
+*.gif
+renders/
+.idea/
