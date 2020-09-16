@@ -1,5 +1,7 @@
 # sierpinski pyramid gcode generator
 
+<img src="sierpinski_order_7.jpg" width="400" align="center"></img>
+
 Skip to the [usage/tutorial](#usagetutorial) section if you just want to get printing.
 
 - [sierpinski pyramid gcode generator](#sierpinski-pyramid-gcode-generator)
