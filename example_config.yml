@@ -16,6 +16,7 @@ relativeExtrusion: true
 extrusionWidth: 0.4 # mm
 filamentDiameter: 1.75 # mm
 layerHeight: 0.2 # mm
+primeFilamentLength: 10.0
 outputFilename: inputFilename + ".gcode"
 
 

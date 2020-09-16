@@ -19,21 +19,22 @@ var pyramidNominalHeight = math.Sqrt(2)
 var thresholdSqr = 0.0001 * 0.0001
 
 type GcodeGenerator struct {
-	Order             int     `yaml:"order"`
-	Size              float64 `yaml:"size"`
-	SpeedMmS          float64 `yaml:"speed"`
-	BedSize           float64 `yaml:"bedSize"`
-	ZOffset           float64 `yaml:"zOffset"`
-	FanStartLayer     int     `yaml:"fanStartLayer"`
-	RelativeExtrusion bool    `yaml:"relativeExtrusion"`
-	ExtrusionWidth    float64 `yaml:"extrusionWidth"`
-	FilamentDiameter  float64 `yaml:"filamentDiameter"`
-	LayerHeight       float64 `yaml:"layerHeight"`
-	StartGcode        string  `yaml:"startGcode"`
-	EndGcode          string  `yaml:"endGcode"`
-	OutputFilename    string  `yaml:"outputFilename"`
-	GcodeXYDecimals   int     `yaml:"gcodeXYDecimals"`
-	GcodeEDecimals    int     `yaml:"gcodeEDecimals"`
+	Order               int     `yaml:"order"`
+	Size                float64 `yaml:"size"`
+	SpeedMmS            float64 `yaml:"speed"`
+	BedSize             float64 `yaml:"bedSize"`
+	ZOffset             float64 `yaml:"zOffset"`
+	FanStartLayer       int     `yaml:"fanStartLayer"`
+	RelativeExtrusion   bool    `yaml:"relativeExtrusion"`
+	ExtrusionWidth      float64 `yaml:"extrusionWidth"`
+	FilamentDiameter    float64 `yaml:"filamentDiameter"`
+	LayerHeight         float64 `yaml:"layerHeight"`
+	StartGcode          string  `yaml:"startGcode"`
+	EndGcode            string  `yaml:"endGcode"`
+	OutputFilename      string  `yaml:"outputFilename"`
+	GcodeXYDecimals     int     `yaml:"gcodeXYDecimals"`
+	GcodeEDecimals      int     `yaml:"gcodeEDecimals"`
+	PrimeFilamentLength float64 `yaml:"primeFilamentLength"`
 	/////////////////////////////////////////////
 	inputFilename        string
 	inputFileContent     []byte
@@ -50,17 +51,18 @@ type GcodeGenerator struct {
 
 func DefaultGcodeGenerator(inputFilename string, inputFileContent []byte) GcodeGenerator {
 	return GcodeGenerator{
-		SpeedMmS:          40,
-		ZOffset:           0,
-		FanStartLayer:     3,
-		RelativeExtrusion: true,
-		ExtrusionWidth:    0.4,
-		FilamentDiameter:  1.75,
-		LayerHeight:       0.2,
-		OutputFilename:    inputFilename + ".gcode",
-		inputFilename:     inputFilename,
-		inputFileContent:  inputFileContent,
-		GcodeXYDecimals:   2,
+		SpeedMmS:            40,
+		ZOffset:             0,
+		FanStartLayer:       3,
+		RelativeExtrusion:   true,
+		ExtrusionWidth:      0.4,
+		FilamentDiameter:    1.75,
+		LayerHeight:         0.2,
+		OutputFilename:      inputFilename + ".gcode",
+		inputFilename:       inputFilename,
+		inputFileContent:    inputFileContent,
+		GcodeXYDecimals:     2,
+		PrimeFilamentLength: 10,
 	}
 }
 
@@ -115,7 +117,7 @@ func (g *GcodeGenerator) calculateFilamentUsed(layers [][]mgl64.Vec3) {
 			lastPoint = point
 		}
 	}
-	g.filamentUsedMm = totalDist * g.extrusionPerLinearMM
+	g.filamentUsedMm = totalDist*g.extrusionPerLinearMM + g.PrimeFilamentLength
 }
 
 func (g *GcodeGenerator) Generate() {
@@ -267,12 +269,36 @@ func (g *GcodeGenerator) writeEndGcode() {
 }
 
 func (g *GcodeGenerator) writePrimeLine() {
-	// TODO: make a prime line pattern that can work for arbitrary prime size needed
 	g.fprintlnOrFail("; prime the nozzle")
 	bedSize2 := g.BedSize / 2
 	scale := g.Size / 2
-	g.travelTo(mgl64.Vec3{bedSize2 + scale, bedSize2 - scale - 10, g.ZOffset})
-	g.printToXY(bedSize2-scale, bedSize2-scale-10)
+	numPrimeLines := int(math.Ceil(g.PrimeFilamentLength / g.extrusionPerLinearMM / g.Size))
+	if numPrimeLines%2 == 1 {
+		numPrimeLines += 1
+	}
+	primeLineSeparation := g.ExtrusionWidth * 2
+	distFromObject := math.Max(5.0, 2*primeLineSeparation)
+
+	lineMinX := bedSize2 - scale
+	lineMaxX := bedSize2 + scale
+	linesStartMinY := bedSize2 - scale - distFromObject - primeLineSeparation*float64(numPrimeLines)
+
+	g.travelTo(mgl64.Vec3{lineMinX, linesStartMinY, g.ZOffset})
+	for i := 0; i < numPrimeLines/2; i++ {
+		/*
+			print the lines two-at-a-time, in this shape:
+			|
+			|__________________________
+			__________________________|
+			|
+			|
+		*/
+		g.printToXY(lineMinX, linesStartMinY+float64(2*i)*primeLineSeparation)
+		g.printToXY(lineMaxX, linesStartMinY+float64(2*i)*primeLineSeparation)
+		g.printToXY(lineMaxX, linesStartMinY+float64(2*i+1)*primeLineSeparation)
+		g.printToXY(lineMinX, linesStartMinY+float64(2*i+1)*primeLineSeparation)
+	}
+	// finally, go to the start of the print
 	g.printToXY(bedSize2-scale, bedSize2-scale)
 	g.fprintlnOrFail("")
 }
