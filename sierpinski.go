@@ -7,7 +7,6 @@ import (
 
 var PyramidNominalHeight = math.Sqrt(2)
 
-
 /**
 standard sierpinski has base on the [-1,1] square in x and y
 and z goes from 0 to sqrt(2)
@@ -21,6 +20,58 @@ func sierpinski0(height float64) []mgl64.Vec3 {
 		{-scale, scale, height},
 	}
 	return points
+}
+
+func SierpinskiHiddenness(order int, height float64) []int {
+	if order == 0 {
+		return []int{0, 0, 0, 0}
+	} else if order < 0 {
+		panic("order < 0")
+	}
+	if height < 0 || height > PyramidNominalHeight {
+		panic("height out of range!")
+	}
+
+	if height < PyramidNominalHeight/2 { // bottom half
+		lowerLeft := SierpinskiHiddenness(order-1, height*2)
+		lowerRight := SierpinskiHiddenness(order-1, height*2)
+		upperRight := SierpinskiHiddenness(order-1, height*2)
+		upperLeft := SierpinskiHiddenness(order-1, height*2)
+		middle := SierpinskiHiddenness(order-1, PyramidNominalHeight-height*2)
+
+		for i := len(lowerLeft) / 4; i < 3*len(lowerLeft)/4; i++ {
+			lowerLeft[i]++
+		}
+
+		for i := 0; i < len(lowerRight)/4; i++ {
+			lowerRight[i] = lowerRight[i] + 1
+			upperRight[i] = upperRight[i] + 1
+			upperLeft[i] = upperLeft[i] + 1
+		}
+		for i := 3 * len(lowerRight) / 4; i < len(lowerRight); i++ {
+			lowerRight[i] = lowerRight[i] + 1
+			upperRight[i] = upperRight[i] + 1
+			upperLeft[i] = upperLeft[i] + 1
+		}
+
+		res := make([]int, 0, len(lowerLeft)+len(lowerRight)+len(upperRight)+len(upperLeft)+len(middle))
+		res = append(res, lowerLeft[:len(lowerLeft)/2]...)
+		res = append(res, middle[:len(middle)/4]...)
+		res = append(res, lowerRight...)
+		res = append(res, middle[len(middle)/4:len(middle)/2]...)
+		res = append(res, upperRight...)
+		res = append(res, middle[len(middle)/2:3*len(middle)/4]...)
+		res = append(res, upperLeft...)
+		res = append(res, middle[3*len(middle)/4:]...)
+		res = append(res, lowerLeft[len(lowerLeft)/2:]...)
+		if len(res) != len(lowerLeft)+len(lowerRight)+len(upperRight)+len(upperLeft)+len(middle) {
+			panic("that's a problem")
+		}
+		return res
+	} else { // top half
+		middle := SierpinskiHiddenness(order-1, (height-PyramidNominalHeight/2)*2)
+		return middle
+	}
 }
 
 func Sierpinski(order int, height float64) []mgl64.Vec3 {
@@ -111,4 +162,3 @@ func assertMod4Len(v []mgl64.Vec3) {
 		panic("bad length")
 	}
 }
-
