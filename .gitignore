@@ -1,3 +1,5 @@
 *.gcode
-sierpinski-pyramid-gcode*
+sierpinski-pyramid-gcode.darwin
+sierpinski-pyramid-gcode.linux
+sierpinski-pyramid-gcode.windows.exe
 notes.md
