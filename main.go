@@ -338,6 +338,13 @@ func sierpinski0(height float64) []mgl64.Vec3 {
 	return points
 }
 
+var flipXYmat4 = [16]float64{
+	0, 1, 0, 0,
+	1, 0, 0, 0,
+	0, 0, 1, 0,
+	0, 0, 0, 1,
+}
+
 func sierpinski(order int, height float64) []mgl64.Vec3 {
 	if order == 0 {
 		return sierpinski0(height)
@@ -366,6 +373,12 @@ func sierpinski(order int, height float64) []mgl64.Vec3 {
 		middleTransform := mgl64.Translate3D(0, 0, pyramidNominalHeight/2).Mul4(
 			mgl64.Scale3D(1, 1, -1)).Mul4(
 			mgl64.Scale3D(0.5, 0.5, 0.5))
+		if order == 1 {
+			lowerLeftTransform = lowerLeftTransform.Mul4(flipXYmat4)
+			lowerRightTransform = lowerRightTransform.Mul4(flipXYmat4)
+			upperRightTransform = upperRightTransform.Mul4(flipXYmat4)
+			upperLeftTransform = upperLeftTransform.Mul4(flipXYmat4)
+		}
 
 		// lower left
 		lowerLeft := sierpinski(order-1, height*2)
