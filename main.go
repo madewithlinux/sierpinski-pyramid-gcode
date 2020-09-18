@@ -16,53 +16,63 @@ var Version = "development"
 var Rev = "HEAD"
 
 var pyramidNominalHeight = math.Sqrt(2)
-var thresholdSqr = 0.0001 * 0.0001
+var threshold = 0.001
+var thresholdSqr = threshold * threshold
 
 type GcodeGenerator struct {
-	Order               int     `yaml:"order"`
-	Size                float64 `yaml:"size"`
-	SpeedMmS            float64 `yaml:"speed"`
-	BedSize             float64 `yaml:"bedSize"`
-	ZOffset             float64 `yaml:"zOffset"`
-	FanStartLayer       int     `yaml:"fanStartLayer"`
-	RelativeExtrusion   bool    `yaml:"relativeExtrusion"`
-	ExtrusionWidth      float64 `yaml:"extrusionWidth"`
-	FilamentDiameter    float64 `yaml:"filamentDiameter"`
-	LayerHeight         float64 `yaml:"layerHeight"`
-	StartGcode          string  `yaml:"startGcode"`
-	EndGcode            string  `yaml:"endGcode"`
-	OutputFilename      string  `yaml:"outputFilename"`
-	GcodeXYDecimals     int     `yaml:"gcodeXYDecimals"`
-	GcodeEDecimals      int     `yaml:"gcodeEDecimals"`
-	PrimeFilamentLength float64 `yaml:"primeFilamentLength"`
+	Order                    int     `yaml:"order"`
+	Size                     float64 `yaml:"size"`
+	SpeedMmS                 float64 `yaml:"speed"`
+	BedSize                  float64 `yaml:"bedSize"`
+	ZOffset                  float64 `yaml:"zOffset"`
+	FanStartLayer            int     `yaml:"fanStartLayer"`
+	RelativeExtrusion        bool    `yaml:"relativeExtrusion"`
+	ExtrusionWidth           float64 `yaml:"extrusionWidth"`
+	FirstLayerExtrusionWidth float64 `yaml:"firstLayerExtrusionWidth"`
+	FilamentDiameter         float64 `yaml:"filamentDiameter"`
+	LayerHeight              float64 `yaml:"layerHeight"`
+	StartGcode               string  `yaml:"startGcode"`
+	EndGcode                 string  `yaml:"endGcode"`
+	OutputFilename           string  `yaml:"outputFilename"`
+	GcodeXYDecimals          int     `yaml:"gcodeXYDecimals"`
+	GcodeEDecimals           int     `yaml:"gcodeEDecimals"`
+	PrimeFilamentLength      float64 `yaml:"primeFilamentLength"`
+	Octahedron               bool    `yaml:"octahedron"`
+	SupportFinHeight         float64 `yaml:"supportFinHeight"`
+	SupportExtrusionFactor   float64 `yaml:"supportExtrusionFactor"`
 	/////////////////////////////////////////////
-	inputFilename        string
-	inputFileContent     []byte
-	pyramidZHeight       float64
-	numLayers            int
-	extrusionPerLinearMM float64
-	extruderPosition     float64
-	lastToolheadPosition mgl64.Vec3
-	bedCenter            mgl64.Vec3
-	writer               io.WriteCloser
-	smallestPyramidSize  float64
-	filamentUsedMm       float64
+	inputFilename                  string
+	inputFileContent               []byte
+	pyramidZHeight                 float64
+	numLayers                      int
+	extrusionPerLinearMM           float64
+	firstLayerExtrusionPerLinearMM float64
+	extruderPosition               float64
+	lastToolheadPosition           mgl64.Vec3
+	bedCenter                      mgl64.Vec3
+	writer                         io.WriteCloser
+	smallestPyramidSize            float64
+	filamentUsedMm                 float64
+	xyMin                          float64
+	xyMax                          float64
 }
 
 func DefaultGcodeGenerator(inputFilename string, inputFileContent []byte) GcodeGenerator {
 	return GcodeGenerator{
-		SpeedMmS:            40,
-		ZOffset:             0,
-		FanStartLayer:       3,
-		RelativeExtrusion:   true,
-		ExtrusionWidth:      0.4,
-		FilamentDiameter:    1.75,
-		LayerHeight:         0.2,
-		OutputFilename:      inputFilename + ".gcode",
-		inputFilename:       inputFilename,
-		inputFileContent:    inputFileContent,
-		GcodeXYDecimals:     2,
-		PrimeFilamentLength: 10,
+		SpeedMmS:               40,
+		ZOffset:                0,
+		FanStartLayer:          3,
+		RelativeExtrusion:      true,
+		ExtrusionWidth:         0.4,
+		FilamentDiameter:       1.75,
+		LayerHeight:            0.2,
+		OutputFilename:         inputFilename + ".gcode",
+		inputFilename:          inputFilename,
+		inputFileContent:       inputFileContent,
+		GcodeXYDecimals:        2,
+		PrimeFilamentLength:    10,
+		Octahedron:             false,
+		SupportExtrusionFactor: 0.25,
 	}
 }
 
@@ -71,9 +81,21 @@ func (g *GcodeGenerator) Init() {
 	g.numLayers = int(g.pyramidZHeight / g.LayerHeight)
 	g.extrusionPerLinearMM = g.LayerHeight * g.ExtrusionWidth / (math.Pi * math.Pow(g.FilamentDiameter/2, 2))
 	g.bedCenter = mgl64.Vec3{g.BedSize / 2, g.BedSize / 2, g.ZOffset}
+	g.xyMin = g.BedSize/2 - g.Size/2
+	g.xyMax = g.BedSize/2 + g.Size/2
 	g.smallestPyramidSize = g.Size / math.Pow(2, float64(g.Order))
 	if g.GcodeEDecimals == 0 {
 		g.GcodeEDecimals = int(math.Ceil(math.Log2(math.Exp2(float64(g.GcodeXYDecimals)) / g.extrusionPerLinearMM)))
+		if !g.RelativeExtrusion {
+			g.GcodeEDecimals += g.GcodeXYDecimals
+		}
+	}
+	if g.FirstLayerExtrusionWidth == 0 {
+		g.FirstLayerExtrusionWidth = g.ExtrusionWidth * 1.5
+	}
+	g.firstLayerExtrusionPerLinearMM = g.LayerHeight * g.FirstLayerExtrusionWidth / (math.Pi * math.Pow(g.FilamentDiameter/2, 2))
+	if g.SupportFinHeight == 0 {
+		g.SupportFinHeight = math.Min(g.pyramidZHeight-20*g.LayerHeight, g.pyramidZHeight*0.85)
 	}
 
 	if g.smallestPyramidSize < 5.0*g.ExtrusionWidth {
@@ -129,10 +151,43 @@ func (g *GcodeGenerator) Generate() {
 	g.writePrimeLine()
 
 	g.fprintlnOrFail("; sierpinski pyramid starts now")
-	for i, points := range layers {
-		g.writeLayer(points)
-		if i == g.FanStartLayer {
-			g.fanOn()
+	if g.Octahedron {
+		// print a raft/brim type thing, to print the subsequent support fins on
+		numRaftSections := int(math.Ceil(g.Size / g.FirstLayerExtrusionWidth))
+		for i := 0; i < (numRaftSections+1)/2; i++ {
+			g.printToXY(g.xyMin, g.xyMin+float64(2*i)*g.FirstLayerExtrusionWidth)
+			g.printToXY(g.xyMax, g.xyMin+float64(2*i)*g.FirstLayerExtrusionWidth)
+			g.printToXY(g.xyMax, g.xyMin+float64(2*i+1)*g.FirstLayerExtrusionWidth)
+			g.printToXY(g.xyMin, g.xyMin+float64(2*i+1)*g.FirstLayerExtrusionWidth)
+		}
+		// return to the start of the print
+		g.printToXY(g.xyMin, g.xyMax+g.FirstLayerExtrusionWidth)
+		g.printToXY(g.xyMin-g.FirstLayerExtrusionWidth, g.xyMax+g.FirstLayerExtrusionWidth)
+		g.printToXY(g.xyMin-g.FirstLayerExtrusionWidth, g.xyMin)
+		g.printTo(mgl64.Vec3{g.xyMin, g.xyMin, g.ZOffset + g.LayerHeight})
+
+		// now all subsequent prints must be shifted one layer higher
+		for i := range layers {
+			points := layers[len(layers)-i-1]
+			zOverride := layers[i][0][2] + g.LayerHeight
+			g.writeLayerWithSupportFins(points, zOverride, layers[i][0][2] < g.SupportFinHeight)
+			if i == g.FanStartLayer {
+				g.fanOn()
+			}
+		}
+		for i, points := range layers {
+			zOverride := points[0][2] + layers[len(layers)-1][0][2] - g.ZOffset + g.LayerHeight
+			g.writeLayerWithSupportFins(points, zOverride, false)
+			if i == g.FanStartLayer {
+				g.fanOn()
+			}
+		}
+	} else {
+		for i, points := range layers {
+			g.writeLayer(points)
+			if i == g.FanStartLayer {
+				g.fanOn()
+			}
 		}
 	}
 	g.fanOff()
@@ -157,12 +212,22 @@ func (g *GcodeGenerator) printTo(pt mgl64.Vec3) {
 	if vec4ApproxEq(g.lastToolheadPosition, pt) {
 		return
 	}
-	e := pt.Sub(g.lastToolheadPosition).Len() * g.extrusionPerLinearMM
+	extrusionPerLinearMM := g.extrusionPerLinearMM
+	speedMmS := g.SpeedMmS
+	if pt[2] <= (g.ZOffset+g.LayerHeight)*(threshold+1) {
+		extrusionPerLinearMM = g.firstLayerExtrusionPerLinearMM
+		speedMmS /= 2
+	}
+	g.printToAdvanced(pt, speedMmS, extrusionPerLinearMM)
+}
+func (g *GcodeGenerator) printToAdvanced(pt mgl64.Vec3, speedMmS float64, extrusionPerLinearMM float64) {
+	e := pt.Sub(g.lastToolheadPosition).Len() * extrusionPerLinearMM
+	feedrate := speedMmS * 60
 	if !g.RelativeExtrusion {
 		g.extruderPosition += e
 		e = g.extruderPosition
 	}
-	g.fprintfOrFail("G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, g.SpeedMmS*60)
+	g.fprintfOrFail("G1 X%f Y%f Z%f E%f F%f\n", pt[0], pt[1], pt[2], e, feedrate)
 	g.lastToolheadPosition = pt
 }
 func (g *GcodeGenerator) printToXYMinimal(pt mgl64.Vec3) {
@@ -172,6 +237,9 @@ func (g *GcodeGenerator) printToXYMinimal(pt mgl64.Vec3) {
 		return
 	}
 	e := pt.Sub(g.lastToolheadPosition).Len() * g.extrusionPerLinearMM
+	if pt[2] <= (g.ZOffset+g.LayerHeight)*(threshold+1) {
+		e = pt.Sub(g.lastToolheadPosition).Len() * g.firstLayerExtrusionPerLinearMM
+	}
 	if !g.RelativeExtrusion {
 		g.extruderPosition += e
 		e = g.extruderPosition
@@ -212,15 +280,112 @@ func (g *GcodeGenerator) writeConfig() {
 	g.fprintlnOrFail("")
 }
 
+func (g *GcodeGenerator) writeLayerWithSupportFins(pts []mgl64.Vec3, zOverride float64, supportFins bool) {
+	if pts == nil || len(pts) == 0 {
+		return
+	}
+
+	firstPt := pts[0]
+	lastPt := pts[len(pts)-1]
+	firstPt[2] = zOverride
+	lastPt[2] = zOverride
+
+	finOffset := g.ExtrusionWidth * 4
+	finExtrusionPerLinearMM := g.extrusionPerLinearMM * g.SupportExtrusionFactor
+	finSpeedMmS := g.SpeedMmS * 2
+
+	if supportFins {
+		if len(pts) == 4 {
+			g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{g.xyMin, g.xyMin + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{firstPt[0] - finOffset, firstPt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+		} else {
+			g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{firstPt[0], firstPt[1] - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+		}
+		g.printToAdvanced(mgl64.Vec3{firstPt[0], firstPt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+		g.printToAdvanced(mgl64.Vec3{firstPt[0], firstPt[1], zOverride}, g.SpeedMmS, g.extrusionPerLinearMM)
+	} else {
+		// yes, we are intentionally using a print move (and not a travel move) to change layers.
+		// For this sierpinski pyramid, it looks better that way (at least on my printer)
+		g.printTo(mgl64.Vec3{firstPt[0], firstPt[1], zOverride})
+	}
+	for i, pt := range pts {
+		pt[2] = zOverride
+		// move is a x move if y axis does not move. and vice versa
+		xMove := math.Abs(pt[1]-g.lastToolheadPosition[1]) < threshold
+		yMove := math.Abs(pt[0]-g.lastToolheadPosition[0]) < threshold
+		g.printToXYMinimal(pt)
+		if supportFins && (i%(len(pts)/4)) == 0 && i > 0 {
+			if i == len(pts)/4 { // lower right fin
+				// in each of these cases, if the move that ends the layer isn't the kind of move that we expect, we just
+				// have to reverse the direction that we print the fin
+				if yMove {
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax - finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax, g.xyMin + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0] + finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				} else {
+					g.printToAdvanced(mgl64.Vec3{pt[0] + finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax, g.xyMin + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax - finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				}
+			} else if i == len(pts)/2 { // upper right fin
+				if xMove {
+					g.printToAdvanced(mgl64.Vec3{pt[0] + finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax, g.xyMax - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax - finOffset, g.xyMax, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				} else {
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax - finOffset, g.xyMax, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMax, g.xyMax - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0] + finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				}
+			} else if i == 3*len(pts)/4 { // upper left fin
+				if yMove {
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMax, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMin, g.xyMax - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0] - finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				} else {
+					g.printToAdvanced(mgl64.Vec3{pt[0] - finOffset, pt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMin, g.xyMax - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMax, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+					g.printToAdvanced(mgl64.Vec3{pt[0], pt[1] + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+				}
+			}
+			// lower left fin is handled before/after this loop, as it starts and ends the layer
+			g.printToAdvanced(pt, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(pt, g.SpeedMmS, g.extrusionPerLinearMM)
+		}
+	}
+	if !vec4ApproxEq(firstPt, lastPt) {
+		g.printTo(firstPt)
+	}
+	if supportFins {
+		if len(pts) == 4 {
+			// special case for base-case layers, which need fins to be printed in the opposite direction
+			g.printToAdvanced(mgl64.Vec3{firstPt[0], firstPt[1] - finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+		} else {
+			g.printToAdvanced(mgl64.Vec3{firstPt[0] - finOffset, firstPt[1], zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{g.xyMin, g.xyMin + finOffset, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+			g.printToAdvanced(mgl64.Vec3{g.xyMin + finOffset, g.xyMin, zOverride}, finSpeedMmS, finExtrusionPerLinearMM)
+		}
+	}
+}
+
 func (g *GcodeGenerator) writeLayer(pts []mgl64.Vec3) {
 	if pts == nil || len(pts) == 0 {
 		return
 	}
 
-	g.printTo(pts[0])
-
 	// yes, we are intentionally using a print move (and not a travel move) to change layers.
 	// For this sierpinski pyramid, it looks better that way (at least on my printer)
+	g.printTo(pts[0])
+
 	for _, pt := range pts {
 		g.printToXYMinimal(pt)
 	}
@@ -272,11 +437,11 @@ func (g *GcodeGenerator) writePrimeLine() {
 	g.fprintlnOrFail("; prime the nozzle")
 	bedSize2 := g.BedSize / 2
 	scale := g.Size / 2
-	numPrimeLines := int(math.Ceil(g.PrimeFilamentLength / g.extrusionPerLinearMM / g.Size))
+	numPrimeLines := int(math.Ceil(g.PrimeFilamentLength / g.firstLayerExtrusionPerLinearMM / g.Size))
 	if numPrimeLines%2 == 1 {
 		numPrimeLines += 1
 	}
-	primeLineSeparation := g.ExtrusionWidth * 2
+	primeLineSeparation := g.FirstLayerExtrusionWidth * 2
 	distFromObject := math.Max(5.0, 2*primeLineSeparation)
 
 	lineMinX := bedSize2 - scale
