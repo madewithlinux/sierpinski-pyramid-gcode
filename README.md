@@ -1,4 +1,5 @@
 # sierpinski pyramid gcode generator
+[![Build Status](https://travis-ci.org/madewithlinux/sierpinski-pyramid-gcode.svg?branch=master)](https://travis-ci.org/madewithlinux/sierpinski-pyramid-gcode)
 
 <img src="sierpinski_order_7.jpg" width="400" align="center"></img>
 
